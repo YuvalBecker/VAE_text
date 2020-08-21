@@ -16,7 +16,6 @@ Model architecture:
 
 
 
-## Some results of generation:
 ### There severeal options of generation:
 option 1 :  given a start word or a sentence,condition the rest of generation.
 more specificly I inject to the decoder a charecter Token and the first word (or a sentence).
