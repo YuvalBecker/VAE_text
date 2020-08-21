@@ -2,13 +2,11 @@ import torch
 from torch import nn, optim
 from Data_loader import Data_for_train
 from Data_loader import freinds_parsing
-import random
-from losses import KLD, similarity_loss
+from losses import KLD
 from torch.optim.lr_scheduler import CyclicLR
 from torch.utils.tensorboard import SummaryWriter
 
 import numpy as np
-import torch.nn.functional as F
 import argparse
 
 from model_creation import vae_auto_encoder
