@@ -1,86 +1,58 @@
 import torch
-from torch import nn, optim
-from Data_loader import Data_for_train
-from Data_loader import freinds_parsing
-import random
-from losses import KLD, similarity_loss
-from torch.optim.lr_scheduler import CyclicLR
-from torch.utils.tensorboard import SummaryWriter
-
+from torch import nn
 import numpy as np
 import torch.nn.functional as F
-import argparse
 
 
-
-class AttnDecoderGen_lstm(nn.Module):
-    def __init__(self, hidden_size, embedding_size, input_size, output_size, n_layers=4, embbed_pretrained_weight=None,
-                 seq_len=19, bidirectional=False, encoder_bidirictional=True):
-        super(AttnDecoderGen_lstm, self).__init__()
-
-        # Keep parameters for reference
-        self.hidden_size = hidden_size
-        self.embedding_size = embedding_size
+class AttnDecoderRNN(nn.Module):
+    def __init__(self,input_size,embedding_size=50, output_size=None,embbed_pretrained_weight=None, dropout_p=0.1, max_length=20):
+        super(AttnDecoderRNN, self).__init__()
+        self.hidden_size = embedding_size
         self.output_size = output_size
-        self.n_layers = n_layers
-        self.input_size = input_size
-        self.bidirectional = bidirectional
+        self.dropout_p = dropout_p
+        self.max_length = max_length
+
+        #self.embedding = nn.Embedding(self.output_size, self.hidden_size)
         self.embedding = nn.Embedding(input_size, embedding_size)
         # using matched pretrained embeddings:
         if not embbed_pretrained_weight is None:  # Using zero initialization for nonvocabulary words:
             self.embedding.weight.data.copy_(torch.from_numpy(embbed_pretrained_weight))
-        self.embedding.weight.requires_grad = True
-        self.drop_out_embedding = nn.Dropout(0.3)
 
-        self.drop_out = nn.Dropout(0.4)
+        self.attn = nn.Linear(embedding_size * 2, 10)
+        self.attn_combine = nn.Linear(self.hidden_size + max_length+1 , self.hidden_size)
+        self.dropout = nn.Dropout(self.dropout_p)
+        self.gru = nn.GRU(self.hidden_size, self.hidden_size)
+        self.out = nn.Linear(self.hidden_size, self.output_size)
 
-        # Define layers
-        self.encoder_bidirictional = encoder_bidirictional
-        self.lstm2 = nn.LSTM(self.embedding_size + self.hidden_size, hidden_size, n_layers, batch_first=True,
-                             dropout=0.5, bidirectional=self.bidirectional)
-        self.out = nn.Linear(hidden_size, output_size)
+    def forward(self, input, hidden, encoder_outputs):
+        embedded = self.embedding(input)
+        embedded = self.dropout(embedded).squeeze()
+        if len(np.shape(embedded) ) ==1:
+            embedded =embedded.unsqueeze(0)
+            attn_weights = F.softmax(
+                self.attn(torch.cat((embedded, hidden.squeeze(0)), 1)), dim=1)
+        else:
+            attn_weights = F.softmax(
+                self.attn(torch.cat((embedded, hidden.squeeze()), 1)), dim=1)
+        attn_applied = torch.bmm(encoder_outputs,attn_weights.unsqueeze(1).transpose(1,2)
+                                 )
 
-        #
-        self.attn = Attn(hidden_size)
+        output = torch.cat((embedded, attn_applied[:,:,0]   ), 1)
+        output = self.attn_combine(output).unsqueeze(1)
 
-    def forward(self, word_input, last_hidden, encoder_outputs):
-        # Note: we run this one step at a time
+        output = F.relu(output.transpose(1,0))
+        output, hidden = self.gru(output, hidden)
 
-        # Get the embedding of the current input word (last output word)
-
-        # Calculate attention from current RNN state and all encoder outputs; apply to encoder outputs
-        attn_weights = self.attn(last_hidden[0], encoder_outputs)
-        context = attn_weights.unsqueeze(1).bmm(encoder_outputs)  # B x 1 x N
-
-        word_embedded = self.embedding(word_input.squeeze())  # S=1 x B x N
-
-        word_embedded = self.drop_out_embedding(word_embedded)
-        # Combine embedded input word and last context, run through RNN
-        context = context.squeeze()
-        word_embedded = word_embedded.squeeze()
-        if len(np.shape(word_embedded)) < 2:
-            word_embedded = word_embedded.unsqueeze(0)
-            context = context.unsqueeze(0)
-        rnn_input = torch.cat((word_embedded, context), 1)
-        rnn_output, hidden = self.lstm2(rnn_input.unsqueeze(1), last_hidden)
-
-        # Final output layer (next word prediction) using the RNN hidden state and context vector
-
-        rnn_output = rnn_output.squeeze(0)  # S=1 x B x N -> B x N
-        context = context.squeeze(1)  # B x S=1 x N -> B x N
-        output = self.drop_out(self.out(rnn_output))
-
-        # Return final output, hidden state
-        return output, hidden
+        output = F.log_softmax(self.out(output[0]), dim=1)
+        return output, hidden, attn_weights
 
     def init_hidden(self, batch_size):
-        hidden = (torch.zeros(self.n_layers, batch_size, self.hidden_size).cuda(),
-                  torch.zeros(self.n_layers, batch_size, self.hidden_size).cuda())
-        return hidden
+        return torch.zeros( 1,batch_size, self.hidden_size).cuda()
+
 
 
 class Eecoder_Gen_lstm(nn.Module):
-    def __init__(self, hidden_size, embedding_size, output_size, n_layers=4, bidirectional=True, embedding=None,
+    def __init__(self, hidden_size, embedding_size, output_size, n_layers=4, bidirectional=True, embedding=None,use_conv= False,
                  sampling=False):
         super(Eecoder_Gen_lstm, self).__init__()
 
@@ -92,6 +64,7 @@ class Eecoder_Gen_lstm(nn.Module):
         self.n_layers = n_layers
         self.const_embed = []
         self.bidirectional = bidirectional
+        self.use_conv = use_conv
 
         # Define layers
         self.embedding = embedding
@@ -102,11 +75,14 @@ class Eecoder_Gen_lstm(nn.Module):
 
         self.conv1_rnn = nn.Conv1d(in_channels=hidden_size * 2, out_channels=hidden_size * 2, stride=1, kernel_size=3)
 
+
         self.lstm = nn.LSTM(embedding_size, hidden_size, n_layers, dropout=0.5, batch_first=True,
                             bidirectional=self.bidirectional)
-        self.mu_est = nn.Parameter(torch.FloatTensor(self.hidden_size * 2, self.hidden_size * 2).cuda())
+        self.mu_est =nn.Linear(hidden_size* 2, int(hidden_size/2) )
+        #self.mu_est = nn.Parameter(torch.FloatTensor(self.hidden_size * 2, self.hidden_size * 2).cuda())
+        self.sigma_est =nn.Linear(hidden_size* 2, int(hidden_size/2) )
 
-        self.sigma_est = nn.Parameter(torch.FloatTensor(self.hidden_size * 2, self.hidden_size * 2).cuda())
+        #self.sigma_est = nn.Parameter(torch.FloatTensor(self.hidden_size * 2, self.hidden_size * 2).cuda())
 
     def forward(self, word_input, last_hidden):
         # Note: we run this one step at a time (word by word...)
@@ -114,14 +90,13 @@ class Eecoder_Gen_lstm(nn.Module):
         word_embedded = self.embedding(word_input)  # S=1 x B x N
         # run through LSTM
         rnn_output, hidden = self.lstm(word_embedded, last_hidden)
-        # Reducing dimentions
-        out_conv1d = self.conv2_rnn(self.conv1_rnn(rnn_output.transpose(2, 1)))
-        # correcting dims for LSTM later :
-        output_correct_dim = out_conv1d.transpose(2, 1)
 
         if self.sampling:
-            mu = torch.matmul(output_correct_dim, self.mu_est)
-            logvar = torch.matmul(output_correct_dim, self.sigma_est)
+            mu= self.mu_est(rnn_output)
+            logvar= self.sigma_est(rnn_output)
+
+            #mu = torch.matmul(output_correct_dim, self.mu_est)
+            #logvar = torch.matmul(output_correct_dim, self.sigma_est)
 
             logvar = torch.clamp(logvar, -10, 10)
             std = torch.exp(0.5 * logvar)
@@ -182,13 +157,8 @@ def vae_auto_encoder(opt, data_train):
     embedding_size = opt.embedding_size
     hidden_size = opt.n_hidden
     n_layers_encoder = opt.n_layers_E
-    n_layers_decoder = opt.n_layers_D
-
-    decoder = AttnDecoderGen_lstm(hidden_size=hidden_size * (2), embedding_size=embedding_size, \
-                                  output_size=data_train.n_words, input_size=data_train.n_words,
-                                  embbed_pretrained_weight=data_train.embedding, \
-                                  n_layers=n_layers_decoder, bidirectional=False,
-                                  encoder_bidirictional=True).cuda()
+    max_length = 20 # Input sentence to encoder -> any input less , should be padded.
+    decoder =AttnDecoderRNN(embedding_size=embedding_size, output_size=data_train.n_words ,input_size=data_train.n_words, embbed_pretrained_weight=data_train.embedding, dropout_p=0.1, max_length=max_length).cuda()
 
     encoder = Eecoder_Gen_lstm(hidden_size=hidden_size, embedding_size=embedding_size, \
                                output_size=data_train.n_words, \

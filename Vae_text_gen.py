@@ -170,7 +170,7 @@ def generation_func_combination(data_train, decoder, encoder, charecters=['joey'
         encoder_output = (encoder_output1[0:] + encoder_output2[
                                                 0:]) / 2  # in order to skip the identity of  a speaker in the decoder.
 
-        output, decoder_hidden = decoder(decoder_input.view(batch_size, 1),
+        output, decoder_hidden ,atten_weights= decoder(decoder_input.view(batch_size, 1),
                                          decoder_hidden, encoder_output)
     topv, topi = output.topk(k=3)
     # probs = torch.softmax(topv,2)
@@ -195,10 +195,10 @@ def generation_func_combination(data_train, decoder, encoder, charecters=['joey'
         encoder_output = (encoder_output1[0:] + encoder_output2[
                                                 0:]) / 2  # in order to skip the identity of  a speaker in the decoder.
 
-        output, decoder_hidden = decoder(decoder_input.view(batch_size, 1)
+        output, decoder_hidden ,atten_weights= decoder(decoder_input.view(batch_size, 1)
                                          , decoder_hidden, encoder_output)
 
-        topv, topi = output.topk(k=3)
+        topv, topi = output.topk(k=2)
         # probs = torch.softmax(topv,2)
 
         ni = topi[0][0].item()
@@ -219,11 +219,6 @@ def generation_func_combination(data_train, decoder, encoder, charecters=['joey'
 
     return output_text
 
-    # target_tensor2 = torch.zeros(batch_size,data_train.n_words).cuda()
-    # for lk in range(batch_size):
-    #    target_tensor2[i,target_tensor[lk,ii]] =1
-    # sentence_loss+= torch.sum(torch.abs(output.squeeze()-target_tensor2))
-    output_softmax = torch.log_softmax((output.view(-1, batch_size, data_train.n_words)), 2).squeeze()
 def generation_func_combination_random_sample(data_train, decoder , charecters=['joey', 'rachel'], gen_length=11,opt=None):
     encoded_list1 = []
     encoded_list2 = []
@@ -239,14 +234,15 @@ def generation_func_combination_random_sample(data_train, decoder , charecters=[
     encoded_list1.append(charecter_ind1)
     encoded_list2.append(charecter_ind2)
     decoder_input=torch.LongTensor(encoded_list1).cuda()
-    encoder_output = torch.FloatTensor(np.random.random((1, 3, 2*opt.hidden_size))).cuda()
+    encoder_output = torch.FloatTensor(np.random.random((1,21,10 ))).cuda() # Should be (1,Max length +1 , hidden_size) ->wrong writn
+    # hard coded
 
     for i in range(gen_length):
 
-        output, decoder_hidden = decoder(decoder_input.view(batch_size, 1)
+        output, decoder_hidden,atten_weights  = decoder(decoder_input.view(batch_size, 1)
                                          , decoder_hidden, encoder_output)
 
-        topv, topi = output.topk(k=3)
+        topv, topi = output.topk(k=4)
         choices = topi.tolist()
         ni = np.random.choice(choices[0])
         decoder_input = torch.LongTensor([ni]).cuda()
@@ -287,21 +283,21 @@ if __name__ == '__main__':
 
 
     parser.add_argument('--sentence_L', type=int, default=20,help= 'The length of the sentence to process')
-    parser.add_argument('--to_train', type=bool, default=True,help='if false only generation')
-    parser.add_argument('--generation_type', type=str, default='normal',help='to train == False')
+    parser.add_argument('--to_train', type=bool, default=False,help='if false only generation')
+    parser.add_argument('--generation_type', type=str, default='random_sample',help='choose random_sample or normal and to train == False ')
     parser.add_argument('--gen_length', type=int, default='20',help='to train == False , sentence length of generation')
 
     #Optimizer: (using cyclic LR)  \\
-    parser.add_argument('--base_lr', type=float, default=8e-3)
-    parser.add_argument('--max_lr', type=float, default=1e-2)
+    parser.add_argument('--base_lr', type=float, default=2e-6)
+    parser.add_argument('--max_lr', type=float, default=1e-3)
 
     # Trainning loop:
-    parser.add_argument('--epochs', type=int, default=4000)
+    parser.add_argument('--epochs', type=int, default=10000)
     parser.add_argument('--batch_size', type=int, default=1280)
     parser.add_argument('--tensorboard_dir', type=str, default='.\\tf\\anther_run\\')
     parser.add_argument('--load_pretrained', type=bool, default=True)
-    parser.add_argument('--path_encoder', type=str, default='.\\saved_models\\encoder_3000')
-    parser.add_argument('--path_decoder', type=str, default='.\\saved_models\\decoder_3000')
+    parser.add_argument('--path_encoder', type=str, default='.\\saved_models\\encoder_8900')
+    parser.add_argument('--path_decoder', type=str, default='.\\saved_models\\decoder_8900')
     parser.add_argument('--path_save_dir', type=str, default='.\\saved_models\\')
 
 
@@ -387,7 +383,7 @@ if __name__ == '__main__':
 
     writer = SummaryWriter(opt.tensorboard_dir)
 
-    weight = torch.FloatTensor([100, 20]).cuda()
+    weight = torch.FloatTensor([1, 200]).cuda()
     if opt.to_train == True:
         # Trainning loop :
         for e in range(1, n_epochs + 1):
@@ -395,17 +391,20 @@ if __name__ == '__main__':
             Total_batches = np.int(train_num / batch_size - 1)
             for i in range(Total_batches):
                 decoder_hidden = decoder.init_hidden(batch_size=batch_size)
+                encoder_hidden = encoder.init_hidden(batch_size=batch_size)
+
                 sentence_loss = 0
                 sequence_tensor = torch.LongTensor(trainning_train[i * batch_size: i * batch_size + batch_size, :]).cuda()
                 target_tensor = torch.LongTensor(trainning_train[i * batch_size: i * batch_size + batch_size, 1:]).cuda()
 
-                encoder_output, hidden_encoder, mu, logvar = encoder.forward(sequence_tensor, last_hidden=hidden)
+                encoder_output, hidden_encoder, mu, logvar = encoder.forward(sequence_tensor, last_hidden=encoder_hidden)
                 decoder_hidden = decoder.init_hidden(batch_size=batch_size)
                 decoder_context = torch.zeros(batch_size, encoder.hidden_size * (1 + encoder.bidirectional)).cuda()
                 for ii in range(sequence_L - 1):
                     decoder_input2 = torch.LongTensor(trainning_train[i * batch_size: i * batch_size + batch_size, ii]).cuda()
-                    output, decoder_hidden = decoder(decoder_input2.view(batch_size, 1), decoder_hidden,
+                    output, decoder_hidden ,attn_weights = decoder(decoder_input2.view(batch_size, 1), decoder_hidden,
                                                           encoder_output)
+
                     output_softmax = torch.log_softmax((output.view(-1, batch_size, data_train.n_words)), 2).squeeze()
                     argmax = torch.argmax(output_softmax, 1)
 
