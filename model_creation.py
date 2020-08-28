@@ -34,8 +34,7 @@ class AttnDecoderRNN(nn.Module):
         else:
             attn_weights = F.softmax(
                 self.attn(torch.cat((embedded, hidden.squeeze()), 1)), dim=1)
-        attn_applied = torch.bmm(encoder_outputs,attn_weights.unsqueeze(1).transpose(1,2)
-                                 )
+        attn_applied = torch.bmm(encoder_outputs,attn_weights.unsqueeze(1).transpose(1,2))
 
         output = torch.cat((embedded, attn_applied[:,:,0]   ), 1)
         output = self.attn_combine(output).unsqueeze(1)
@@ -48,8 +47,6 @@ class AttnDecoderRNN(nn.Module):
 
     def init_hidden(self, batch_size):
         return torch.zeros( 1,batch_size, self.hidden_size).cuda()
-
-
 
 class Eecoder_Gen_lstm(nn.Module):
     def __init__(self, hidden_size, embedding_size, output_size, n_layers=4, bidirectional=True, embedding=None,use_conv= False,
@@ -71,18 +68,14 @@ class Eecoder_Gen_lstm(nn.Module):
         # using matched pretrained embeddings:
 
         self.embedding.weight.requires_grad = True
-        self.conv2_rnn = nn.Conv1d(in_channels=hidden_size * 2, out_channels=hidden_size * 2, stride=2, kernel_size=3)
-
-        self.conv1_rnn = nn.Conv1d(in_channels=hidden_size * 2, out_channels=hidden_size * 2, stride=1, kernel_size=3)
-
 
         self.lstm = nn.LSTM(embedding_size, hidden_size, n_layers, dropout=0.5, batch_first=True,
                             bidirectional=self.bidirectional)
+
         self.mu_est =nn.Linear(hidden_size* 2, int(hidden_size/2) )
-        #self.mu_est = nn.Parameter(torch.FloatTensor(self.hidden_size * 2, self.hidden_size * 2).cuda())
+
         self.sigma_est =nn.Linear(hidden_size* 2, int(hidden_size/2) )
 
-        #self.sigma_est = nn.Parameter(torch.FloatTensor(self.hidden_size * 2, self.hidden_size * 2).cuda())
 
     def forward(self, word_input, last_hidden):
         # Note: we run this one step at a time (word by word...)
@@ -95,14 +88,11 @@ class Eecoder_Gen_lstm(nn.Module):
             mu= self.mu_est(rnn_output)
             logvar= self.sigma_est(rnn_output)
 
-            #mu = torch.matmul(output_correct_dim, self.mu_est)
-            #logvar = torch.matmul(output_correct_dim, self.sigma_est)
-
-            logvar = torch.clamp(logvar, -10, 10)
+            logvar = torch.clamp(logvar, -20, 20)
             std = torch.exp(0.5 * logvar)
             eps = torch.randn_like(std)
             mu = torch.clamp(mu, -100, 100)
-
+            #Sample (reparametrization trick)
             sampled_tensor = mu + eps * std
             rnn_output = sampled_tensor
 
@@ -112,7 +102,6 @@ class Eecoder_Gen_lstm(nn.Module):
         hidden = (torch.zeros((1 + self.bidirectional) * self.n_layers, batch_size, self.hidden_size).cuda(),
                   torch.zeros((1 + self.bidirectional) * self.n_layers, batch_size, self.hidden_size).cuda())
         return hidden
-
 
 class Attn(nn.Module):
     def __init__(self, hidden_size):
@@ -151,7 +140,6 @@ class Attn(nn.Module):
         energy = self.attn(attn_input)
         energy = torch.mm(self.v.unsqueeze(0), (torch.transpose(energy, 0, 1)))
         return energy
-
 
 def vae_auto_encoder(opt, data_train):
     embedding_size = opt.embedding_size

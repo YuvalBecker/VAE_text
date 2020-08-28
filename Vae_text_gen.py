@@ -75,65 +75,6 @@ def url_chooser(name='freinds', debug_mode=False):
         url_list = url_list[0:2]
     return url_list
 
-def generation_func(data_train, decoder, encoder, charecter='joey', gen_length=11, sentence=None):
-    decoder_context = torch.zeros(1, encoder.hidden_size * (1 + encoder.bidirectional)).cuda()
-
-    encoded_list = []
-    output_text = []
-    charecter_ind = data_train.word2index[charecter + '1']
-    batch_size = 1
-    hidden = encoder.init_hidden(batch_size=batch_size)
-
-    decoder_hidden = decoder.init_hidden(batch_size=batch_size)
-
-    encoded_list.append(charecter_ind)
-    for i in range(len(sentence)):
-        encoded_list.append(data_train.word2index[sentence[i]])
-    encoder_input = torch.LongTensor(encoded_list).cuda()
-
-    for k in range(len(sentence) + 1):
-        decoder_input = encoder_input[k]
-        encoder_output, hidden_encoder = encoder.forward(encoder_input.view(batch_size, len(encoded_list)),
-                                                         last_hidden=hidden)
-
-        output, decoder_hidden = decoder(decoder_input.view(batch_size, 1)
-                                         , decoder_hidden, encoder_output)
-    topv, topi = output.topk(k=3)
-    # probs = torch.softmax(topv,2)
-
-    choices = topi.tolist()
-    ni = np.random.choice(choices[0])
-    decoder_input = torch.LongTensor([ni]).cuda()
-    encoded_list.append(ni)
-    encoder_input = torch.LongTensor(encoded_list).cuda()
-    output_text.append(data_train.index2word[ni])
-
-    for i in range(gen_length):
-        encoder_output, hidden_encoder = encoder.forward(encoder_input.view(batch_size, len(encoded_list)),
-                                                         last_hidden=hidden)
-
-        output, decoder_hidden = decoder(decoder_input.view(batch_size, 1),
-                                         decoder_hidden, encoder_output)
-
-        topv, topi = output.topk(k=3)
-        # probs = torch.softmax(topv,2)
-
-        ni = topi[0][0].item()
-        choices = topi.tolist()
-        ni = np.random.choice(choices[0])
-        decoder_input = torch.LongTensor([ni]).cuda()
-        encoded_list.append(ni)
-        encoder_input = torch.LongTensor(encoded_list).cuda()
-        output_text.append(data_train.index2word[ni])
-
-    return output_text
-
-    # target_tensor2 = torch.zeros(batch_size,data_train.n_words).cuda()
-    # for lk in range(batch_size):
-    #    target_tensor2[i,target_tensor[lk,ii]] =1
-    # sentence_loss+= torch.sum(torch.abs(output.squeeze()-target_tensor2))
-    output_softmax = torch.log_softmax((output.view(-1, batch_size, data_train.n_words)), 2).squeeze()
-
 def generation_func_combination(data_train, decoder, encoder, charecters=['joey', 'rachel'], gen_length=11,
                                 sentence=None):
     encoded_list1 = []
@@ -234,23 +175,25 @@ def generation_func_combination_random_sample(data_train, decoder , charecters=[
     encoded_list1.append(charecter_ind1)
     encoded_list2.append(charecter_ind2)
     decoder_input=torch.LongTensor(encoded_list1).cuda()
-    encoder_output = torch.FloatTensor(np.random.random((1,21,10 ))).cuda() # Should be (1,Max length +1 , hidden_size) ->wrong writn
+    encoder_output = 5*torch.FloatTensor(np.random.random((1,21,10 ))).cuda() # Should be (1,Max length +1 , hidden_size) ->wrong writn
     # hard coded
-
+    ni_prev=0
     for i in range(gen_length):
+        flage = 1
 
-        output, decoder_hidden,atten_weights  = decoder(decoder_input.view(batch_size, 1)
-                                         , decoder_hidden, encoder_output)
+        while(flage):
+            encoder_output +0.0001*np.random.rand()
+            output, decoder_hidden,atten_weights  = decoder(decoder_input.view(batch_size, 1)
+                                             , decoder_hidden, encoder_output)
 
-        topv, topi = output.topk(k=4)
-        choices = topi.tolist()
-        ni = np.random.choice(choices[0])
-        decoder_input = torch.LongTensor([ni]).cuda()
-        encoded_list1.append(ni)
-        encoded_list2.append(ni)
-
-        output_text.append(data_train.index2word[ni])
-
+            topv, topi = output.topk(k=2)
+            choices = topi.tolist()
+            ni = np.random.choice(choices[0])
+            decoder_input = torch.LongTensor([ni]).cuda()
+            if ni_prev!=ni:
+                flage=0
+                output_text.append(data_train.index2word[ni])
+                ni_prev = ni
     return output_text
 
     # target_tensor2 = torch.zeros(batch_size,data_train.n_words).cuda()
@@ -266,8 +209,8 @@ if __name__ == '__main__':
     #model:
     parser.add_argument('--n_vocab', type=int, default=None)
     parser.add_argument('--n_hidden', type=int, default=20)
-    parser.add_argument('--n_layers_E', type=int, default=2)
-    parser.add_argument('--n_layers_D', type=int, default=2)
+    parser.add_argument('--n_layers_E', type=int, default=5)
+    parser.add_argument('--n_layers_D', type=int, default=5)
 
     #Dataset:
     parser.add_argument('--url', type=str, default='freinds')
@@ -288,16 +231,17 @@ if __name__ == '__main__':
     parser.add_argument('--gen_length', type=int, default='20',help='to train == False , sentence length of generation')
 
     #Optimizer: (using cyclic LR)  \\
-    parser.add_argument('--base_lr', type=float, default=2e-6)
-    parser.add_argument('--max_lr', type=float, default=1e-3)
+    parser.add_argument('--base_lr', type=float, default=2e-5)
+    parser.add_argument('--max_lr', type=float, default=2e-3)
+
 
     # Trainning loop:
     parser.add_argument('--epochs', type=int, default=10000)
-    parser.add_argument('--batch_size', type=int, default=1280)
+    parser.add_argument('--batch_size', type=int, default=400)
     parser.add_argument('--tensorboard_dir', type=str, default='.\\tf\\anther_run\\')
     parser.add_argument('--load_pretrained', type=bool, default=True)
-    parser.add_argument('--path_encoder', type=str, default='.\\saved_models\\encoder_8900')
-    parser.add_argument('--path_decoder', type=str, default='.\\saved_models\\decoder_8900')
+    parser.add_argument('--path_encoder', type=str, default='.\\saved_models\\encoder_7600')
+    parser.add_argument('--path_decoder', type=str, default='.\\saved_models\\decoder_7600')
     parser.add_argument('--path_save_dir', type=str, default='.\\saved_models\\')
 
 
