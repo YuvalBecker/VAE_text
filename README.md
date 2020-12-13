@@ -25,7 +25,7 @@ In order to generate the attention model weights the given distribution conditio
 Generation of specific character: 
 Give  a first word and :
 
-### The first word is : “sex”  
+### The first word is : “love”  
 #### rachel:
 ['i', 'dont', 'think', 'that', 'this', 'cut', 'a', 'deal', 'you', 'know', 'i', 'have', 'to', 'say', 'i', 'have', 'a', 'lot', 'of', 'the', 'condom', '?', 'i', 'i', 'have']
 
